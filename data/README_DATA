@@ -1,0 +1,3 @@
+this data irectory contains two config files.
+One is args.txt. It describes the data through various parameters, read by data.py when parsing the data
+t_range.txt specifies the range of the data. t stands for tumor. Required for normalisation ? (TODO : to investigate why is needed)

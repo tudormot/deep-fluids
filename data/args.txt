@@ -1,0 +1,38 @@
+path_format: 0_98_%d.npz#not used atm
+log_dir: data/tumor
+resolution_y: 64
+resolution_z: 64
+num_simulations: 21
+resolution_x: 64
+
+
+supervised_parameters: 6
+anatomy_latent_dim: 8
+p0: diffusivity
+p1: proliferation
+p2: time
+p3: tumorstart_x
+p4: tumorstart_y
+p5: tumorstart_z
+
+max_time: 20
+min_time: 0
+
+max_diffusivity:1
+min_diffusivity:0
+
+max_proliferation:1
+min_proliferation:0
+
+max_tumorstart_x:1
+min_tumorstart_x:0
+
+max_tumorstart_y:1
+min_tumorstart_y:0
+
+max_tumorstart_z:1
+min_tumorstart_z:0
+
+#...
+#should be noted that diffusivity parameter specified is the diffusivity in white matter!1
+#TODO: need to specify min and max values for parameters, probably for normalizaiton.. I do not know them. Also need to recheck range of time parameter
