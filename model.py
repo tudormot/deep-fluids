@@ -2,6 +2,71 @@ import numpy as np
 import tensorflow as tf
 from ops import *
 
+
+def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
+                num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=False, act=lrelu, reuse=False):
+
+    # (self.x, self.y, self.filters, self.z_num, use_sparse=self.use_sparse,
+    # num_conv=self.num_conv, repeat=self.repeat)
+
+    with tf.variable_scope(name, reuse=reuse) as vs:
+
+        #x contains not only brain anatomy, but also tumor concentration . Extract only brain anatomy:
+        brain_anatomy = x[:,:,:,1:]
+        tumor_ground_truth = x[:,:,:,0]
+
+        anatomy_encoded, _ = EncoderBE(brain_anatomy, filters, anatomy_latent_dim, 'enc',
+                         num_conv=num_conv - 1, conv_k=conv_k, repeat=repeat,
+                         act=act, reuse=reuse)
+
+        #deduce output shape from input x shape:
+        output_shape = tumor_ground_truth.get_tensor_shape()
+
+        if repeat == 0:
+            repeat_num = int(np.log2(np.max(output_shape[:-1]))) - 2
+        else:
+            repeat_num = repeat
+        assert (repeat_num > 0 and np.sum([i % np.power(2, repeat_num - 1) for i in output_shape[:-1]]) == 0)
+
+        x0_shape = [int(i / np.power(2, repeat_num - 1)) for i in output_shape[:-1]] + [filters]
+        print('first layer:', x0_shape, 'to', output_shape)
+
+        num_output = int(np.prod(x0_shape))
+        layer_num = 0
+        x = linear(y, num_output, name=str(layer_num) + '_fc')
+        layer_num += 1
+
+        #todo: really debug this in terms of dimensions, axis, etc.... axis=1 placeholder right now
+        x = tf.concat(x,anatomy_encoded, axis=1)
+
+        x = reshape(x, x0_shape[0], x0_shape[1], x0_shape[2])
+        x0 = x
+
+        for idx in range(repeat_num):
+            for _ in range(num_conv):
+                x = conv2d(x, filters, k=conv_k, s=1, act=act, name=str(layer_num) + '_conv')
+                layer_num += 1
+
+            if idx < repeat_num - 1:
+                if skip_concat:
+                    x = upscale(x, 2)
+                    x0 = upscale(x0, 2)
+                    x = tf.concat([x, x0], axis=-1)
+                else:
+                    x += x0
+                    x = upscale(x, 2)
+                    x0 = x
+
+            elif not skip_concat:
+                x += x0
+
+        out = conv2d(x, output_shape[-1], k=last_k, s=1, name=str(layer_num) + '_conv')
+        # out = tf.clip_by_value(out, -1, 1)
+
+    variables = tf.contrib.framework.get_variables(vs)
+    return out, variables
+
+
 def GeneratorBE(z, filters, output_shape, name='G',
                 num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=False, act=lrelu, reuse=False):
     with tf.variable_scope(name, reuse=reuse) as vs:
@@ -116,6 +181,7 @@ def DiscriminatorPatch3(x, filters, name='D', train=True, reuse=False):
     return out, variables
 
 def EncoderBE(x, filters, z_num, name='enc', num_conv=4, conv_k=3, repeat=0, act=lrelu, reuse=False):
+    """z_num - shape of output, IE shape of anatomy latent space"""
     with tf.variable_scope(name, reuse=reuse) as vs:
         x_shape = get_conv_shape(x)[1:]
         if repeat == 0:
@@ -222,6 +288,8 @@ def NN(x, filters, onum, name='NN', act=tf.nn.elu, dropout=0.1, train=True, reus
         out = linear(x, onum)
     variables = tf.contrib.framework.get_variables(vs)    
     return out, variables
+
+
 
 def main(_):
     # #########

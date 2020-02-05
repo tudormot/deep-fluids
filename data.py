@@ -28,55 +28,82 @@ class BatchManager(object):
                 arg, arg_value = line[:-1].split(': ')
                 self.args[arg] = arg_value
 
+        #our data is always in 3d now, for tumors
         self.is_3d = config.is_3d
-        if 'ae' in config.arch:
-            def sortf(x):
-                nf = int(self.args['num_frames'])
-                n = os.path.basename(x)[:-4].split('_')
-                return int(n[0])*nf + int(n[1])
+        assert self.is_3d is True, 'problem'
 
-            self.paths = sorted(glob("{}/{}/*".format(self.root, config.data_type[0])),
-                                key=sortf)
-            # num_path = len(self.paths)          
-            # num_train = int(num_path*0.95)
-            # self.test_paths = self.paths[num_train:]
-            # self.paths = self.paths[:num_train]
+
+        # if 'ae' in config.arch:
+        #     def sortf(x):
+        #         nf = int(self.args['num_frames'])
+        #         n = os.path.basename(x)[:-4].split('_')
+        #         return int(n[0])*nf + int(n[1])
+        #
+        #     self.paths = sorted(glob("{}/{}/*".format(self.root, config.data_type[0])),
+        #                         key=sortf)
+        #     # num_path = len(self.paths)
+        #     # num_train = int(num_path*0.95)
+        #     # self.test_paths = self.paths[num_train:]
+        #     # self.paths = self.paths[:num_train]
+        # else:
+        #     self.paths = sorted(glob("{}/{}/*".format(self.root, config.data_type[0])))
+
+        if 'tumor' in config.arch:
+            self.paths = glob("{}/{}/*".format(self.root, config.data_type[0]))
+
         else:
-            self.paths = sorted(glob("{}/{}/*".format(self.root, config.data_type[0])))
-        
+            raise Exception('only tumor architecture currently supported (1)')
+
+
         self.num_samples = len(self.paths)
         assert(self.num_samples > 0)
         self.batch_size = config.batch_size
         self.epochs_per_step = self.batch_size / float(self.num_samples) # per epoch
 
         self.data_type = config.data_type
-        if self.data_type == 'velocity':
-            if self.is_3d: depth = 3
-            else: depth = 2
-        else:
-            depth = 1
-        
+        # if self.data_type == 'velocity':
+        #     if self.is_3d: depth = 3
+        #     else: depth = 2
+        # else:
+        #     depth = 1
+        #
+        if self.data_type == 'tumor_data':
+            depth = 4
+
         self.res_x = config.res_x
         self.res_y = config.res_y
         self.res_z = config.res_z
         self.depth = depth
-        self.c_num = int(self.args['num_param'])
+
 
         if self.is_3d:
             feature_dim = [self.res_z, self.res_y, self.res_x, self.depth]
         else:
             feature_dim = [self.res_y, self.res_x, self.depth]
         
-        if 'ae' in config.arch:
-            self.dof = int(self.args['num_dof'])
-            label_dim = [self.dof, int(self.args['num_frames'])]
-        else:
-            label_dim = [self.c_num]
+        # if 'ae' in config.arch:
+        #     self.dof = int(self.args['num_dof']) #TODO: again, not yet sure of the relationship between c_num and dof. Does c include dof or not?
+        #     label_dim = [self.dof, int(self.args['num_frames'])]
+        # else:
+        #     label_dim = [self.c_num]
 
+
+        if 'tumor' in config.arch:
+            self.num_supervised_param = int(self.args['supervised_parameters'])
+            self.dim_latent_anatomy = int(self.args['anatomy_latent_dim'])
+            label_dim = self.num_supervised_param
+        else:
+            raise Exception('only tumor architecture currently supported (2)')
+
+
+        #TODO: not sure what this does
         if self.is_3d:
             min_after_dequeue = 500
         else:
             min_after_dequeue = 5000
+
+
+
         capacity = min_after_dequeue + 3 * self.batch_size
         self.q = tf.FIFOQueue(capacity, [tf.float32, tf.float32], [feature_dim, label_dim])
         self.x = tf.placeholder(dtype=tf.float32, shape=feature_dim)
@@ -89,23 +116,19 @@ class BatchManager(object):
         self.y_range = []
         self.y_num = []
 
-        if 'ae' in config.arch:
-            for i in range(self.c_num):
-                p_name = self.args['p%d' % i]
-                p_min = float(self.args['min_{}'.format(p_name)])
-                p_max = float(self.args['max_{}'.format(p_name)])
-                p_num = int(self.args['num_{}'.format(p_name)])
-                self.y_num.append(p_num)
-            for i in range(label_dim[0]):
-                self.y_range.append([-1, 1])
-        else:
-            for i in range(self.c_num):
+
+        #TODO: need to check whether the order of the parameters matters in args.txt . Probably matters
+        #TODO: this if statement tells the code how to normalise the labels.. atm we should not normalise
+        if 'tumor' in config.arch:
+            for i in range(self.num_supervised_param):
                 p_name = self.args['p%d' % i]
                 p_min = float(self.args['min_{}'.format(p_name)])
                 p_max = float(self.args['max_{}'.format(p_name)])
                 p_num = int(self.args['num_{}'.format(p_name)])
                 self.y_range.append([p_min, p_max])
                 self.y_num.append(p_num)
+        else:
+            raise Exception('only tumor architecture currently supported (2)')
 
     def __del__(self):
         try:
@@ -125,7 +148,7 @@ class BatchManager(object):
                            x, y, data_type, x_range, y_range):
             with coord.stop_on_exception():                
                 while not coord.should_stop():
-                    id = rng.randint(len(paths))
+                    id = rng.randint(len(paths))  #TODO: shouldn't we sample without replacing rather? Ask ivan, seems fishy
                     x_, y_ = preprocess(paths[id], data_type, x_range, y_range)
                     sess.run(enqueue, feed_dict={x: x_, y: y_})
 
@@ -323,6 +346,7 @@ def preprocess(file_path, data_type, x_range, y_range):
     #     x = x[::-1] # horizontal flip
 
     # normalize
+    #TODO:check this normalization. Have not modified anything
     if data_type[0] == 'd':
         x = x*2 - 1
     else:

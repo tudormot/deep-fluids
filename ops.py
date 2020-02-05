@@ -6,6 +6,82 @@ import tensorflow as tf
 import tensorflow.contrib.slim as slim
 import numpy as np
 
+def jacobian3tumor(x):
+    # x: bzyxd
+    dudx = x[:, :, :, 1:, 0] - x[:, :, :, :-1, 0]
+    #dvdx = x[:, :, :, 1:, 1] - x[:, :, :, :-1, 1]
+    #dwdx = x[:, :, :, 1:, 2] - x[:, :, :, :-1, 2]
+    dudy = x[:, :, 1:, :, 0] - x[:, :, :-1, :, 0]
+    #dvdy = x[:, :, 1:, :, 1] - x[:, :, :-1, :, 1]
+    #dwdy = x[:, :, 1:, :, 2] - x[:, :, :-1, :, 2]
+    dudz = x[:, 1:, :, :, 0] - x[:, :-1, :, :, 0]
+    #dvdz = x[:, 1:, :, :, 1] - x[:, :-1, :, :, 1]
+    #dwdz = x[:, 1:, :, :, 2] - x[:, :-1, :, :, 2]
+
+    # u = dwdy[:,:-1,:,:-1] - dvdz[:,:,1:,:-1]
+    # v = dudz[:,:,1:,:-1] - dwdx[:,:-1,1:,:]
+    # w = dvdx[:,:-1,1:,:] - dudy[:,:-1,:,:-1]
+
+    dudx = tf.concat((dudx, tf.expand_dims(dudx[:, :, :, -1], axis=3)), axis=3)
+    #dvdx = tf.concat((dvdx, tf.expand_dims(dvdx[:, :, :, -1], axis=3)), axis=3)
+    #dwdx = tf.concat((dwdx, tf.expand_dims(dwdx[:, :, :, -1], axis=3)), axis=3)
+
+    dudy = tf.concat((dudy, tf.expand_dims(dudy[:, :, -1, :], axis=2)), axis=2)
+    #dvdy = tf.concat((dvdy, tf.expand_dims(dvdy[:, :, -1, :], axis=2)), axis=2)
+    #dwdy = tf.concat((dwdy, tf.expand_dims(dwdy[:, :, -1, :], axis=2)), axis=2)
+
+    dudz = tf.concat((dudz, tf.expand_dims(dudz[:, -1, :, :], axis=1)), axis=1)
+    #dvdz = tf.concat((dvdz, tf.expand_dims(dvdz[:, -1, :, :], axis=1)), axis=1)
+    #dwdz = tf.concat((dwdz, tf.expand_dims(dwdz[:, -1, :, :], axis=1)), axis=1)
+
+    #u = dwdy - dvdz
+    #v = dudz - dwdx
+    #w = dvdx - dudy
+
+    j = tf.stack([dudx, dudy, dudz], axis=-1)
+    #c = tf.stack([u, v, w], axis=-1)
+
+    return j
+
+def laplacian3D(u):
+    """calculate the discrete laplacian of a 3d scalar field"""
+    assert len(u.get_tensor_shape()) is 3, 'wrong input in laplacian'
+
+    #TODO must double check this function. Potentially test it
+
+    filter = tf.constant([
+        [[0. ,0., 0.],
+         [0. ,1., 0.],
+         [0., 0., 0.]]
+        ,
+        [[0., 1., 0.],
+         [1., -6., 1.],
+         [0., 1., 0.]]
+        ,
+        [[0., 0., 0.],
+         [0., 1., 0.],
+         [0., 0., 0.]]
+    ])
+
+    out = tf.nn.conv3d(
+        input,
+        filter,
+        strides=[1,1,1,1,1],
+        padding = "SAME",
+        data_format='NDHWC',
+    )
+
+    return out
+
+def construct_diffusivity(brain_anatomy , D_w):
+    """this function calculates the parameter D of the tumor growth PDE, required to calculate the loss derived from physics
+    formula: D =  D_w*p_w + D_g*p_g 
+    D_w = 10 * D_g """
+    assert len(brain_anatomy.get_tensor_shape()) is 4, 'problemo'
+    D_w = tf.math.add (tf.math.multiply(D_w, brain_anatomy[:,:,:,1]) , tf.math.multiply(D_w*0.1,brain_anatomy[:,:,:,2]) )
+
+    return D_w
+
 def lrelu(x, leak=0.2):
     return tf.maximum(x, leak*x)
    

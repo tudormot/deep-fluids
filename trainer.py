@@ -9,6 +9,229 @@ import time
 from model import *
 from util import *
 
+class Trainer_tumor(object):
+    def __init__(self, config, batch_manager):
+        self.config = config
+
+        self.batch_manager = batch_manager
+        self.x, self.y = batch_manager.batch()  # normalized input
+
+        self.is_3d = config.is_3d
+        self.dataset = config.dataset
+        self.data_type = config.data_type
+        self.arch = config.arch
+
+
+
+        self.res_x = config.res_x
+        self.res_y = config.res_y
+        self.res_z = config.res_z
+        # self.c_num = batch_manager.c_num  #todo:needs to be replaced with new parameters
+        self.b_num = config.batch_size
+        #self.test_b_num = config.test_batch_size
+
+        self.repeat = config.repeat
+        self.filters = config.filters
+        self.num_conv = config.num_conv
+        self.w1 = config.w1
+        self.w2 = config.w2
+
+        self.output_shape = self.x.get_shape()[:-1]
+        #self.output_shape = get_conv_shape(self.x)[1:] #todo: need to check this
+
+        self.optimizer = config.optimizer
+        self.beta1 = config.beta1
+        self.beta2 = config.beta2
+
+        self.model_dir = config.model_dir
+        self.load_path = config.load_path
+
+        self.start_step = config.start_step
+        self.step = tf.Variable(self.start_step, name='step', trainable=False)
+        # self.max_step = config.max_step
+        self.max_step = int(config.max_epoch // batch_manager.epochs_per_step)
+
+        self.lr_update = config.lr_update
+        if self.lr_update == 'decay':
+            lr_min = config.lr_min
+            lr_max = config.lr_max
+            self.g_lr = tf.Variable(lr_max, name='g_lr')
+            self.g_lr_update = tf.assign(self.g_lr,
+                                         lr_min + 0.5 * (lr_max - lr_min) * (tf.cos(
+                                             tf.cast(self.step, tf.float32) * np.pi / self.max_step) + 1),
+                                         name='g_lr_update')
+        elif self.lr_update == 'step':
+            self.g_lr = tf.Variable(config.lr_max, name='g_lr')
+            self.g_lr_update = tf.assign(self.g_lr, tf.maximum(self.g_lr * 0.5, config.lr_min), name='g_lr_update')
+        else:
+            raise Exception("[!] Invalid lr update method")
+
+        self.lr_update_step = config.lr_update_step
+        self.log_step = config.log_step
+        self.test_step = config.test_step
+        self.save_sec = config.save_sec
+
+        self.is_train = config.is_train
+        if 'tumor' in self.arch:
+            self.num_supervised_param = config.num_supervised_param
+            self.dim_latent_anatomy = self.dim_latent_anatomy
+
+            self.w4 = config.w4
+            self.w5 = config.w5
+            self.code_path = config.code_path #todo:not sure what is this used for
+            self.build_model_tumor()
+        else:
+            print('not supported')
+
+
+
+        self.saver = tf.train.Saver(max_to_keep=1000)
+        self.summary_writer = tf.summary.FileWriter(self.model_dir)
+
+        sv = tf.train.Supervisor(logdir=self.model_dir,
+                                 is_chief=True,
+                                 saver=self.saver,
+                                 summary_op=None,
+                                 summary_writer=self.summary_writer,
+                                 save_model_secs=self.save_sec,
+                                 global_step=self.step,
+                                 ready_for_local_init_op=None)
+
+        gpu_options = tf.GPUOptions(allow_growth=True)
+        sess_config = tf.ConfigProto(allow_soft_placement=True,
+                                     gpu_options=gpu_options)
+
+        self.sess = sv.prepare_or_wait_for_session(config=sess_config)
+
+        if self.is_train:
+            self.batch_manager.start_thread(self.sess)
+
+        # dirty way to bypass graph finilization error
+        g = tf.get_default_graph()
+        g._finalized = False
+
+    def build_model_tumor(self):
+
+        self.x_, self.var = GeneratorTumor(self.x, self.y, self.dim_latent_anatomy, self.filters, use_sparse=self.use_sparse,
+                                       num_conv=self.num_conv, repeat=self.repeat)
+
+        self.x_img = denorm_img(self.x_)  # for debug
+
+        show_all_variables()
+
+        if self.optimizer == 'adam':
+            optimizer = tf.train.AdamOptimizer
+            g_optimizer = optimizer(self.g_lr, beta1=self.beta1, beta2=self.beta2)
+        elif self.optimizer == 'gd':
+            optimizer = tf.train.GradientDescentOptimizer
+            g_optimizer = optimizer(self.g_lr)
+        else:
+            raise Exception("[!] Invalid optimizer")
+
+        # losses
+        self.loss_l1 = tf.reduce_mean(tf.abs(self.x_ - self.x))
+
+        # TODO: wouldn't perhaps using continuous nonlinearities with skip connections be better? wouldn't thaat make the output smooth? OR am I missing the point of this loss?
+        self.x_jaco_ = jacobian3tumor(x_)
+        self.x_jaco = jacobian3tumor(x)
+        self.loss_j_l1 = tf.reduce_mean(tf.abs(self.x_jaco_ - self.x_jaco))
+
+        #y = self.y[:, :, -1]
+        self.loss_physics = self.construct_physics_loss(self.x_,self.x[:,:,:,1:], self.y)
+
+        self.loss = self.loss_l1 * self.w1 + self.loss_j_l1 * self.w2 + self.loss_physics * self.w4
+        #self.loss = self.loss_l1 * self.w1  + self.loss_physics * self.w2
+
+        # if self.use_sparse:
+        #     ds = tf.distributions
+        #     rho = ds.Bernoulli(probs=self.sparsity)
+        #     rho_ = ds.Bernoulli(probs=tf.reduce_mean(self.z[:, :-self.p_num], axis=0))
+        #     self.loss_kl = tf.reduce_sum(ds.kl_divergence(rho, rho_))
+        #     self.loss += self.loss_kl * self.w5
+
+        self.optim = g_optimizer.minimize(self.loss, global_step=self.step, var_list=self.var)
+        self.epoch = tf.placeholder(tf.float32)
+
+        # summary
+        summary = [
+            tf.summary.image("x", self.x_img[:, ::-1]),
+            tf.summary.image("x_vort", self.x_vort_[:, ::-1]),
+
+            tf.summary.scalar("loss/total_loss", self.loss),
+            tf.summary.scalar("loss/loss_l1", self.loss_l1),
+            tf.summary.scalar("loss/loss_j_l1", self.loss_j_l1),
+            tf.summary.scalar("loss/loss_p", self.loss_p),
+
+            tf.summary.scalar("misc/epoch", self.epoch),
+            tf.summary.scalar('misc/q', self.batch_manager.q.size()),
+
+            tf.summary.histogram("y", y),
+            tf.summary.histogram("z", self.z),
+
+            tf.summary.scalar("misc/g_lr", self.g_lr),
+        ]
+
+        if self.use_sparse:
+            summary += [
+                tf.summary.scalar("loss/loss_kl", self.loss_kl),
+            ]
+
+        self.summary_op = tf.summary.merge(summary)
+
+    def construct_physics_loss(concentration_output,brain_anatomy, parameters_input):
+
+        #TODO: right now dependant on parameter order in parameters_input. Could implement a more robust method using pname, see data.py
+        D_w = parameters_input[0]
+        rho = parameters_input[1]
+        time = parameters_input[2]
+
+        diffusion_term = tf.math.multiply(construct_diffusivity(brain_anatomy , D_w),laplacian3D(u))
+        proliferation_term = tf.math.multiply(rho, concentration_output)
+        proliferation_term = tf.math.multiply(proliferation_term, 1 - concentration_output) #todo: not sure if '-' as in difference supported in tensorflow
+        loss = tf.reduce_mean(tf.squared_difference(tf.gradients(x_, time), tf.math.sum(diffusion_term,proliferation_term)))
+        return loss
+
+    def train(self):
+
+
+        # x, pi, zi_ = self.batch_manager.random_list(self.b_num)
+        # x_w = self.get_vort_image(x / 127.5 - 1)
+        # x = np.concatenate((x, x_w), axis=0)
+        # save_image(x, '{}/x_fixed_gt.png'.format(self.model_dir), nrow=self.b_num)
+        #
+        # with open('{}/x_fixed_gt.txt'.format(self.model_dir), 'w') as f:
+        #     f.write(str(pi) + '\n')
+        #     f.write(str(zi_))
+
+            # train
+        for step in trange(self.start_step, self.max_step):
+            self.sess.run(self.optim)
+
+            if step % self.log_step == 0 or step == self.max_step - 1:
+                ep = step * self.batch_manager.epochs_per_step
+                loss, summary = self.sess.run([self.loss, self.summary_op],
+                                              feed_dict={self.epoch: ep})
+
+                assert not np.isnan(loss), 'Model diverged with loss = NaN'
+                print("\n[{}/{}/ep{:.2f}] Loss: {:.6f}".format(step, self.max_step, ep, loss))
+
+                self.summary_writer.add_summary(summary, global_step=step)
+                self.summary_writer.flush()
+
+            # if step % self.test_step == 0 or step == self.max_step - 1:
+            #     self.autoencode(x, self.model_dir, idx=step)
+
+            if self.lr_update == 'step':
+                if step % self.lr_update_step == self.lr_update_step - 1:
+                    self.sess.run(self.g_lr_update)
+            else:
+                self.sess.run(self.g_lr_update)
+
+        # save last checkpoint..
+        save_path = os.path.join(self.model_dir, 'model.ckpt')
+        self.saver.save(self.sess, save_path, global_step=self.step)
+        self.batch_manager.stop_thread()
+
 class Trainer(object):
     def __init__(self, config, batch_manager):
         self.config = config
@@ -21,20 +244,26 @@ class Trainer(object):
         self.data_type = config.data_type
         self.arch = config.arch
 
-        if 'nn' in self.arch:
-            self.xt, self.yt = batch_manager.test_batch()
-            self.xtw, self.ytw = batch_manager.test_batch(is_window=True)
-            self.xw, self.yw = batch_manager.batch(is_window=True)            
+        # if 'nn' in self.arch:
+        #     self.xt, self.yt = batch_manager.test_batch()
+        #     self.xtw, self.ytw = batch_manager.test_batch(is_window=True)
+        #     self.xw, self.yw = batch_manager.batch(is_window=True)
+        # else:
+        #     if self.is_3d:
+        #         self.x_jaco, self.x_vort = jacobian3(self.x)
+        #     else:
+        #         self.x_jaco, self.x_vort = jacobian(self.x)
+
+        if 'tumor' in self.arch and self.is_3d:
+            self.u_physics_loss = self.physics_loss(self.x[:,:,:,0])
         else:
-            if self.is_3d:
-                self.x_jaco, self.x_vort = jacobian3(self.x)
-            else:
-                self.x_jaco, self.x_vort = jacobian(self.x)
+            raise Exception('Only tumor simulations supported (3)')
+
 
         self.res_x = config.res_x
         self.res_y = config.res_y
         self.res_z = config.res_z
-        self.c_num = batch_manager.c_num
+        #self.c_num = batch_manager.c_num  #todo:needs to be replace with new parameters
         self.b_num = config.batch_size
         self.test_b_num = config.test_batch_size
 
@@ -788,3 +1017,8 @@ class Trainer(object):
         x_path = os.path.join(root_path, '{}.png'.format(idx))
         save_image(x, x_path, nrow=self.b_num)
         print("[*] Samples saved: {}".format(x_path))
+
+    def physics_loss(u):
+        "computes physics loss of tumor concentration u, which should be of shape [x,y,z]"
+        print('dummy')
+        return None
