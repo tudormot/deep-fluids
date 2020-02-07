@@ -25,8 +25,10 @@ class BatchManager(object):
                 line = f.readline()
                 if not line:
                     break
-                arg, arg_value = line[:-1].split(': ')
-                self.args[arg] = arg_value
+                if len(line[:-1].split(': ')) == 2:
+                    arg, arg_value = line[:-1].split(': ')
+                    self.args[arg] = arg_value
+                    print('debug. % s  . %s' %(str(arg),str(arg_value)))
 
         #our data is always in 3d now, for tumors
         self.is_3d = config.is_3d
@@ -90,7 +92,10 @@ class BatchManager(object):
 
         if 'tumor' in config.arch:
             self.num_supervised_param = int(self.args['supervised_parameters'])
-            self.dim_latent_anatomy = int(self.args['anatomy_latent_dim'])
+            self.dim_latent_anatomy = [int(self.args['anatomy_latent_x']),
+                                       int(self.args['anatomy_latent_y']),
+                                       int(self.args['anatomy_latent_z']),
+                                       int(self.args['anatomy_latent_c'])]
             label_dim = self.num_supervised_param
         else:
             raise Exception('only tumor architecture currently supported (2)')
@@ -124,9 +129,12 @@ class BatchManager(object):
                 p_name = self.args['p%d' % i]
                 p_min = float(self.args['min_{}'.format(p_name)])
                 p_max = float(self.args['max_{}'.format(p_name)])
-                p_num = int(self.args['num_{}'.format(p_name)])
                 self.y_range.append([p_min, p_max])
-                self.y_num.append(p_num)
+
+                #TODO: this p_num is currently not needed by the tumor code however it is used in their tests. keeping it around in case it is needed. I don't even understand what it means
+                # p_num = int(self.args['num_{}'.format(p_name)])
+                # self.y_num.append(p_num)
+
         else:
             raise Exception('only tumor architecture currently supported (2)')
 

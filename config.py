@@ -13,13 +13,13 @@ def add_argument_group(name):
 
 # Network
 net_arg = add_argument_group('Network')
-net_arg.add_argument('--is_3d', type=str2bool, default=False)
+net_arg.add_argument('--is_3d', type=str2bool, default=True)
 #default shape for current tumor data : 128x128x128x4 (first channel tumour concentration. Last three channels are brain anatomy)
 net_arg.add_argument('--res_x', type=int, default=128)
 net_arg.add_argument('--res_y', type=int, default=128)
 net_arg.add_argument('--res_z', type=int, default=128)
 net_arg.add_argument('--repeat', type=int, default=0)
-net_arg.add_argument('--filters', type=int, default=128)
+net_arg.add_argument('--filters', type=int, default=64)
 net_arg.add_argument('--num_conv', type=int, default=4)
 net_arg.add_argument('--use_curl', type=str2bool, default=True)
 net_arg.add_argument('--w1', type=float, default=1.0, help='weight for l1')
@@ -27,17 +27,21 @@ net_arg.add_argument('--w2', type=float, default=1.0, help='weight for jacobian'
 #net_arg.add_argument('--w3', type=float, default=0.005, help='weight for discriminator')
 net_arg.add_argument('--arch', type=str, default='tumor', choices=['de', 'dg', 'ae', 'nn' , 'tumor'],
                      help='dec, dec+discriminator, auto-encoder, multi-layer perceptron, architecture used for tumor generations, a combination of an encoder and a generative network')
+#for tumor
+net_arg.add_argument('--w4', type=float, default=1.0, help='weight for physics loss')
+
+
 # for AE and NN
 # net_arg.add_argument('--z_num', type=int, default=16)
 # net_arg.add_argument('--use_sparse', type=str2bool, default=False)
 # net_arg.add_argument('--sparsity', type=float, default=0.01)
-# net_arg.add_argument('--w4', type=float, default=1.0, help='weight for p')
+# 
 # net_arg.add_argument('--w5', type=float, default=1.0, help='weight for sparsity constraint')
 # net_arg.add_argument('--w_size', type=int, default=5)
 
 # Data
 data_arg = add_argument_group('Data')
-data_arg.add_argument('--dataset', type=str, default='smoke_pos21_size5_f200')
+data_arg.add_argument('--dataset', type=str, default='')
 data_arg.add_argument('--batch_size', type=int, default=8)
 data_arg.add_argument('--test_batch_size', type=int, default=100)
 data_arg.add_argument('--num_worker', type=int, default=2)
@@ -62,7 +66,7 @@ misc_arg = add_argument_group('Misc')
 misc_arg.add_argument('--log_dir', type=str, default='log')
 misc_arg.add_argument('--tag', type=str, default='tag')
 misc_arg.add_argument('--data_dir', type=str, default='data') #tumor data
-misc_arg.add_argument('--load_path', type=str, default='')
+misc_arg.add_argument('--load_path', type=str, default='/home/tudorm/deep-fluids/model')
 misc_arg.add_argument('--code_path', type=str, default='')
 misc_arg.add_argument('--log_step', type=int, default=500)
 misc_arg.add_argument('--test_step', type=int, default=1000)

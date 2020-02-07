@@ -73,11 +73,11 @@ class Trainer_tumor(object):
 
         self.is_train = config.is_train
         if 'tumor' in self.arch:
-            self.num_supervised_param = config.num_supervised_param
-            self.dim_latent_anatomy = self.dim_latent_anatomy
+            self.num_supervised_param = batch_manager.num_supervised_param
+            self.dim_latent_anatomy = batch_manager.dim_latent_anatomy
 
             self.w4 = config.w4
-            self.w5 = config.w5
+            #self.w5 = config.w5
             self.code_path = config.code_path #todo:not sure what is this used for
             self.build_model_tumor()
         else:
@@ -112,10 +112,10 @@ class Trainer_tumor(object):
 
     def build_model_tumor(self):
 
-        self.x_, self.var = GeneratorTumor(self.x, self.y, self.dim_latent_anatomy, self.filters, use_sparse=self.use_sparse,
+        self.x_, self.var = GeneratorTumor(self.x, self.y, self.dim_latent_anatomy, self.filters, 
                                        num_conv=self.num_conv, repeat=self.repeat)
 
-        self.x_img = denorm_img(self.x_)  # for debug
+        self.x_img = denorm_img3(self.x_)  # for debug
 
         show_all_variables()
 
@@ -127,17 +127,22 @@ class Trainer_tumor(object):
             g_optimizer = optimizer(self.g_lr)
         else:
             raise Exception("[!] Invalid optimizer")
-
+        
+        ground_truth = self.x[:,:,:,:,0]
+        self.x_ = tf.squeeze(self.x_)
         # losses
-        self.loss_l1 = tf.reduce_mean(tf.abs(self.x_ - self.x))
+        self.loss_l1 = tf.reduce_mean(tf.abs(self.x_ - ground_truth))
 
         # TODO: wouldn't perhaps using continuous nonlinearities with skip connections be better? wouldn't thaat make the output smooth? OR am I missing the point of this loss?
-        self.x_jaco_ = jacobian3tumor(x_)
-        self.x_jaco = jacobian3tumor(x)
+        self.x_jaco_ = jacobian3tumor(self.x_)
+        self.x_jaco = jacobian3tumor(ground_truth)
         self.loss_j_l1 = tf.reduce_mean(tf.abs(self.x_jaco_ - self.x_jaco))
 
         #y = self.y[:, :, -1]
-        self.loss_physics = self.construct_physics_loss(self.x_,self.x[:,:,:,1:], self.y)
+
+        #TODO: deactivated as not working. can't soecify gradient wrt time for some reaason
+        #self.loss_physics = self.construct_physics_loss(self.x_,self.x[:,:,:,:,1:], self.y)
+        self.loss_physics  = 0.
 
         self.loss = self.loss_l1 * self.w1 + self.loss_j_l1 * self.w2 + self.loss_physics * self.w4
         #self.loss = self.loss_l1 * self.w1  + self.loss_physics * self.w2
@@ -154,41 +159,52 @@ class Trainer_tumor(object):
 
         # summary
         summary = [
-            tf.summary.image("x", self.x_img[:, ::-1]),
-            tf.summary.image("x_vort", self.x_vort_[:, ::-1]),
+            tf.summary.image("xym/x_img", self.x_img['xym'][:,::-1]),
+            tf.summary.image("zym/x_img", self.x_img['zym'][:,::-1]),
 
             tf.summary.scalar("loss/total_loss", self.loss),
             tf.summary.scalar("loss/loss_l1", self.loss_l1),
             tf.summary.scalar("loss/loss_j_l1", self.loss_j_l1),
-            tf.summary.scalar("loss/loss_p", self.loss_p),
+            #tf.summary.scalar("loss/loss_p", self.loss_p),
 
             tf.summary.scalar("misc/epoch", self.epoch),
             tf.summary.scalar('misc/q', self.batch_manager.q.size()),
 
-            tf.summary.histogram("y", y),
-            tf.summary.histogram("z", self.z),
+            tf.summary.histogram("y", self.y),
+            #tf.summary.histogram("z", self.z),
 
             tf.summary.scalar("misc/g_lr", self.g_lr),
         ]
 
-        if self.use_sparse:
-            summary += [
-                tf.summary.scalar("loss/loss_kl", self.loss_kl),
-            ]
+
 
         self.summary_op = tf.summary.merge(summary)
 
-    def construct_physics_loss(concentration_output,brain_anatomy, parameters_input):
+    def construct_physics_loss(self, concentration_output,brain_anatomy, parameters_input):
+        """computes physics loss for batched data.
+           expected input: concentration output : [B,X,Y,Z]
+                           brain_anatomy: [B,X,Y,Z,C] , C = 3
+                        
+        """
+        print('in physics loss. shape of parameters_input: ', get_conv_shape(parameters_input))
 
         #TODO: right now dependant on parameter order in parameters_input. Could implement a more robust method using pname, see data.py
-        D_w = parameters_input[0]
-        rho = parameters_input[1]
-        time = parameters_input[2]
+        D_w = parameters_input[:,0]
+        rho = parameters_input[:,1]
+        time = parameters_input[:,2]
 
-        diffusion_term = tf.math.multiply(construct_diffusivity(brain_anatomy , D_w),laplacian3D(u))
+        rho = tf.reshape(rho,get_conv_shape(rho) + [1,1,1])
+
+        diffusion_term = tf.math.multiply(construct_diffusivity(brain_anatomy , D_w),laplacian3D(concentration_output))
         proliferation_term = tf.math.multiply(rho, concentration_output)
-        proliferation_term = tf.math.multiply(proliferation_term, 1 - concentration_output) #todo: not sure if '-' as in difference supported in tensorflow
-        loss = tf.reduce_mean(tf.squared_difference(tf.gradients(x_, time), tf.math.sum(diffusion_term,proliferation_term)))
+        proliferation_term = tf.math.multiply(proliferation_term, 1 - concentration_output) 
+        
+        temp1 =  tf.gradients(concentration_output, time)
+        print(help(time))
+        print('debug.content of gradients is : ' + str(temp1))
+        temp2 = tf.math.add(diffusion_term,proliferation_term)
+        temp1 = tf.squared_difference( temp1,temp2 )
+        loss = tf.reduce_mean(temp1)
         return loss
 
     def train(self):

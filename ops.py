@@ -7,14 +7,20 @@ import tensorflow.contrib.slim as slim
 import numpy as np
 
 def jacobian3tumor(x):
+    """calculates the jacobian for a tumor concentration
+        of shape B,X,Y,Z"""
+    
+    assert len(get_conv_shape(x)) is 4, "Unrecognised input format, in jacobian3tumor"
     # x: bzyxd
-    dudx = x[:, :, :, 1:, 0] - x[:, :, :, :-1, 0]
+
+    #TODO: should not make a difference, but i think the difference should be the other way around here .
+    dudx = x[:, :, :, 1:] - x[:, :, :, :-1]
     #dvdx = x[:, :, :, 1:, 1] - x[:, :, :, :-1, 1]
     #dwdx = x[:, :, :, 1:, 2] - x[:, :, :, :-1, 2]
-    dudy = x[:, :, 1:, :, 0] - x[:, :, :-1, :, 0]
+    dudy = x[:, :, 1:, :] - x[:, :, :-1, :]
     #dvdy = x[:, :, 1:, :, 1] - x[:, :, :-1, :, 1]
     #dwdy = x[:, :, 1:, :, 2] - x[:, :, :-1, :, 2]
-    dudz = x[:, 1:, :, :, 0] - x[:, :-1, :, :, 0]
+    dudz = x[:, 1:, :, :] - x[:, :-1, :, :]
     #dvdz = x[:, 1:, :, :, 1] - x[:, :-1, :, :, 1]
     #dwdz = x[:, 1:, :, :, 2] - x[:, :-1, :, :, 2]
 
@@ -45,7 +51,7 @@ def jacobian3tumor(x):
 
 def laplacian3D(u):
     """calculate the discrete laplacian of a 3d scalar field"""
-    assert len(u.get_tensor_shape()) is 3, 'wrong input in laplacian'
+    assert len(get_conv_shape(u)) is 4, 'wrong input in laplacian'
 
     #TODO must double check this function. Potentially test it
 
@@ -62,25 +68,28 @@ def laplacian3D(u):
          [0., 1., 0.],
          [0., 0., 0.]]
     ])
+    filter = tf.reshape(filter,[3,3,3,1,1])
+    u = tf.expand_dims(u,-1)
 
     out = tf.nn.conv3d(
-        input,
+        u,
         filter,
         strides=[1,1,1,1,1],
         padding = "SAME",
         data_format='NDHWC',
     )
 
-    return out
+    return tf.squeeze(out)
 
 def construct_diffusivity(brain_anatomy , D_w):
     """this function calculates the parameter D of the tumor growth PDE, required to calculate the loss derived from physics
     formula: D =  D_w*p_w + D_g*p_g 
     D_w = 10 * D_g """
-    assert len(brain_anatomy.get_tensor_shape()) is 4, 'problemo'
-    D_w = tf.math.add (tf.math.multiply(D_w, brain_anatomy[:,:,:,1]) , tf.math.multiply(D_w*0.1,brain_anatomy[:,:,:,2]) )
+    D_w = tf.reshape(D_w,get_conv_shape(D_w)+[1,1,1])
+    assert len(get_conv_shape(brain_anatomy)) is 5, 'problemo'
+    diffu = tf.math.add (tf.math.multiply(D_w, brain_anatomy[:,:,:,:,1]) , tf.math.multiply(D_w*0.1,brain_anatomy[:,:,:,:,2]) )
 
-    return D_w
+    return diffu
 
 def lrelu(x, leak=0.2):
     return tf.maximum(x, leak*x)

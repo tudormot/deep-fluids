@@ -12,55 +12,66 @@ def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
     with tf.variable_scope(name, reuse=reuse) as vs:
 
         #x contains not only brain anatomy, but also tumor concentration . Extract only brain anatomy:
-        brain_anatomy = x[:,:,:,1:]
-        tumor_ground_truth = x[:,:,:,0]
+        brain_anatomy = x[:,:,:,:,1:]
+        tumor_ground_truth = x[:,:,:,:,0]
 
-        anatomy_encoded, _ = EncoderBE(brain_anatomy, filters, anatomy_latent_dim, 'enc',
+        anatomy_encoded, _ = EncoderAnatomy(brain_anatomy, filters, anatomy_latent_dim, 
                          num_conv=num_conv - 1, conv_k=conv_k, repeat=repeat,
                          act=act, reuse=reuse)
 
         #deduce output shape from input x shape:
-        output_shape = tumor_ground_truth.get_tensor_shape()
+        output_shape = get_conv_shape(tumor_ground_truth)
+        print (output_shape)
 
         if repeat == 0:
-            repeat_num = int(np.log2(np.max(output_shape[:-1]))) - 2
+            repeat_num = int(np.log2(np.max(output_shape[1:]))) - 2
         else:
             repeat_num = repeat
-        assert (repeat_num > 0 and np.sum([i % np.power(2, repeat_num - 1) for i in output_shape[:-1]]) == 0)
+        assert (repeat_num > 0 and np.sum([i % np.power(2, repeat_num - 1) for i in output_shape[1:]]) == 0)
 
-        x0_shape = [int(i / np.power(2, repeat_num - 1)) for i in output_shape[:-1]] + [filters]
-        print('first layer:', x0_shape, 'to', output_shape)
+        # we need to concatenate the latent space data, with dimensions specified by 'anatomy latent dim'
+        # to the input parameters provided in dim. To do this we propagate the input parameters via a 
+        #fc layer to logits of shape anatomy_latent_dim[:-1] + [filter] . Thus we can concatenate
 
-        num_output = int(np.prod(x0_shape))
+        num_output = int(np.prod(np.array(anatomy_latent_dim[:-1] + [filters])))
         layer_num = 0
         x = linear(y, num_output, name=str(layer_num) + '_fc')
         layer_num += 1
+        x = tf.reshape(x, [-1] + anatomy_latent_dim[:-1] + [filters])
 
-        #todo: really debug this in terms of dimensions, axis, etc.... axis=1 placeholder right now
-        x = tf.concat(x,anatomy_encoded, axis=1)
+        print('generator first convolutional layer shape(excluding batch) :', get_conv_shape(x)[1:])
+        print('shape of encoded anatomy (excluding batch):', get_conv_shape(anatomy_encoded)[1:])
 
-        x = reshape(x, x0_shape[0], x0_shape[1], x0_shape[2])
+        x = tf.concat([x,anatomy_encoded], axis=-1)
+
+        print('final generator input shape after concatenation is: ',get_conv_shape(x))
+
         x0 = x
+
+        #todo: shouldn't we decrease number of the channels as the generation progresses? Seemes a bit abbrupt to change from filter+latend_dim.shape[-1] to output.shape[-1] in the last layer
+
+        #at the moment channel progression via generator looks like this:
+        #filter+latend_dim.shape[-1]-->(filter)xnum_repeat-->output_shape
 
         for idx in range(repeat_num):
             for _ in range(num_conv):
-                x = conv2d(x, filters, k=conv_k, s=1, act=act, name=str(layer_num) + '_conv')
+                x = conv3d(x, filters + anatomy_latent_dim[-1], k=conv_k, s=1, act=act, name=str(layer_num) + '_conv')
                 layer_num += 1
 
             if idx < repeat_num - 1:
                 if skip_concat:
-                    x = upscale(x, 2)
-                    x0 = upscale(x0, 2)
+                    x = upscale3(x, 2)
+                    x0 = upscale3(x0, 2)
                     x = tf.concat([x, x0], axis=-1)
                 else:
                     x += x0
-                    x = upscale(x, 2)
+                    x = upscale3(x, 2)
                     x0 = x
 
             elif not skip_concat:
                 x += x0
 
-        out = conv2d(x, output_shape[-1], k=last_k, s=1, name=str(layer_num) + '_conv')
+        out = conv3d(x, 1, k=last_k, s=1, name=str(layer_num) + '_conv')
         # out = tf.clip_by_value(out, -1, 1)
 
     variables = tf.contrib.framework.get_variables(vs)
@@ -180,10 +191,11 @@ def DiscriminatorPatch3(x, filters, name='D', train=True, reuse=False):
     variables = tf.contrib.framework.get_variables(vs)    
     return out, variables
 
-def EncoderBE(x, filters, z_num, name='enc', num_conv=4, conv_k=3, repeat=0, act=lrelu, reuse=False):
+def EncoderBE(x, filters, anatomy_latent_dim, name='enc', num_conv=4, conv_k=3, repeat=0, act=lrelu, reuse=False):
     """z_num - shape of output, IE shape of anatomy latent space"""
     with tf.variable_scope(name, reuse=reuse) as vs:
         x_shape = get_conv_shape(x)[1:]
+        print('debug. get_conv_shape(x) is %s nad x_shape is %s'%(str(get_conv_shape(x),str(x_shape))))
         if repeat == 0:
             repeat_num = int(np.log2(np.max(x_shape[:-1]))) - 2
         else:
@@ -208,7 +220,7 @@ def EncoderBE(x, filters, z_num, name='enc', num_conv=4, conv_k=3, repeat=0, act
                 x = conv2d(x, ch, k=conv_k, s=2, act=act, name=str(layer_num)+'_conv')
                 layer_num += 1
                 x0 = x
-                #x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID')
+                #x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID') #todo: maxpool would be nicer to use..
 
         b = get_conv_shape(x)[0]
         flat = tf.reshape(x, [b, -1])
@@ -217,13 +229,19 @@ def EncoderBE(x, filters, z_num, name='enc', num_conv=4, conv_k=3, repeat=0, act
     variables = tf.contrib.framework.get_variables(vs)
     return out, variables
 
-def EncoderBE3(x, filters, z_num, name='enc', num_conv=3, conv_k=3, repeat=0, act=lrelu, reuse=False):
+def EncoderAnatomy(x, filters, anatomy_latent_dim,name = 'enc', num_conv=3, conv_k=3, repeat=0, act=lrelu, reuse=False):
     with tf.variable_scope(name, reuse=reuse) as vs:
         x_shape = get_conv_shape(x)[1:]
+        print('debuggy. get_conv_shape(x) = %s' %str(get_conv_shape(x)))
         if repeat == 0:
-            repeat_num = int(np.log2(np.max(x_shape[:-1]))) - 2
+            repeat_num = 1 + int(np.log2(np.max(x_shape[:-1]/np.array(anatomy_latent_dim[:-1]))))
+            print("debuggy. repeat_number: %s" %str(repeat_num))
         else:
             repeat_num = repeat
+
+        for i in x_shape[:-1]:
+            print(i % np.power(2, repeat_num-1))
+    
         assert(repeat_num > 0 and np.sum([i % np.power(2, repeat_num-1) for i in x_shape[:-1]]) == 0)
         
         ch = filters
@@ -244,11 +262,12 @@ def EncoderBE3(x, filters, z_num, name='enc', num_conv=3, conv_k=3, repeat=0, ac
                 x = conv3d(x, ch, k=conv_k, s=2, act=act, name=str(layer_num)+'_conv')
                 layer_num += 1
                 x0 = x
-                #x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID')
+                #x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID') #todo: why not use maxpool?
 
-        b = get_conv_shape(x)[0]
-        flat = tf.reshape(x, [b, -1])
-        out = linear(flat, z_num, name=str(layer_num)+'_fc')
+        x = conv3d(x, anatomy_latent_dim[-1], k=conv_k, s=1, act=act, name=str(layer_num)+'_conv')
+
+        print('shape of encoder output:', get_conv_shape(x))
+        out = x
 
     variables = tf.contrib.framework.get_variables(vs)
     return out, variables
