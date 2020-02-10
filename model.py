@@ -4,9 +4,9 @@ from ops import *
 
 
 def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
-                num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=False, act=lrelu, reuse=False):
+                num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=True, act=lrelu, reuse=False):
 
-    # (self.x, self.y, self.filters, self.z_num, use_sparse=self.use_sparse,
+    # (self.x, self.y, self.filters, self.z_num, use_sparse=self.usesparse,
     # num_conv=self.num_conv, repeat=self.repeat)
 
     with tf.variable_scope(name, reuse=reuse) as vs:
@@ -73,6 +73,9 @@ def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
 
         out = conv3d(x, 1, k=last_k, s=1, name=str(layer_num) + '_conv')
         # out = tf.clip_by_value(out, -1, 1)
+        
+        #for debugging:
+        tf.print('Managed to make it to the end of forward pass without OOM error.',out)
 
     variables = tf.contrib.framework.get_variables(vs)
     return out, variables
@@ -130,7 +133,6 @@ def GeneratorBE3(z, filters, output_shape, name='G',
             repeat_num = repeat
         assert(repeat_num > 0 and np.sum([i % np.power(2, repeat_num-1) for i in output_shape[:-1]]) == 0)
         x0_shape = [int(i/np.power(2, repeat_num-1)) for i in output_shape[:-1]] + [filters]
-        print('first layer:', x0_shape, 'to', output_shape)
 
         num_output = int(np.prod(x0_shape))
         layer_num = 0
@@ -232,34 +234,35 @@ def EncoderBE(x, filters, anatomy_latent_dim, name='enc', num_conv=4, conv_k=3, 
 def EncoderAnatomy(x, filters, anatomy_latent_dim,name = 'enc', num_conv=3, conv_k=3, repeat=0, act=lrelu, reuse=False):
     with tf.variable_scope(name, reuse=reuse) as vs:
         x_shape = get_conv_shape(x)[1:]
-        print('debuggy. get_conv_shape(x) = %s' %str(get_conv_shape(x)))
+        print('debugging. Creation of encoder. input shape is  = %s' %str(get_conv_shape(x)))
         if repeat == 0:
             repeat_num = 1 + int(np.log2(np.max(x_shape[:-1]/np.array(anatomy_latent_dim[:-1]))))
-            print("debuggy. repeat_number: %s" %str(repeat_num))
         else:
             repeat_num = repeat
 
-        for i in x_shape[:-1]:
-            print(i % np.power(2, repeat_num-1))
+        print('calculated repeat_num is %s'+str(repeat_num))
+        print('num_conv is set to %s'+str(num_conv))
     
         assert(repeat_num > 0 and np.sum([i % np.power(2, repeat_num-1) for i in x_shape[:-1]]) == 0)
         
-        ch = filters
         layer_num = 0
-        x = conv3d(x, ch, k=conv_k, s=1, act=act, name=str(layer_num)+'_conv')
+        x = conv3d(x, filters, k=conv_k, s=1, act=act, name=str(layer_num)+'_conv')
+        print('shape of x:' + str(get_conv_shape(x)))
         x0 = x
         layer_num += 1
         for idx in range(repeat_num):
             for _ in range(num_conv):
                 x = conv3d(x, filters, k=conv_k, s=1, act=act, name=str(layer_num)+'_conv')
+                print('shape of x:' + str(get_conv_shape(x)))
                 layer_num += 1
 
-            # skip connection
-            x = tf.concat([x, x0], axis=-1)
-            ch += filters
+            # skip connection: TODO. I thought skip connecctions are characterised by sum, not concatentation... I am changing this to sum:
+            #x = tf.concat([x, x0], axis=-1)
+            x = x + x0
 
             if idx < repeat_num - 1:
-                x = conv3d(x, ch, k=conv_k, s=2, act=act, name=str(layer_num)+'_conv')
+                x = conv3d(x, filters, k=conv_k, s=2, act=act, name=str(layer_num)+'_conv')
+                print('shape of x:' + str(get_conv_shape(x)))
                 layer_num += 1
                 x0 = x
                 #x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID') #todo: why not use maxpool?

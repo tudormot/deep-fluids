@@ -28,7 +28,7 @@ class BatchManager(object):
                 if len(line[:-1].split(': ')) == 2:
                     arg, arg_value = line[:-1].split(': ')
                     self.args[arg] = arg_value
-                    print('debug. % s  . %s' %(str(arg),str(arg_value)))
+                    #print('debug. % s  . %s' %(str(arg),str(arg_value)))
 
         #our data is always in 3d now, for tumors
         self.is_3d = config.is_3d

@@ -21,7 +21,7 @@ def main(config):
         trainer.train()
     else:
         if not config.load_path:
-            raise Exception("[!] You should specify `load_path` to load a pretrained model")
+            raise Exception("[!] You shou/home/tudorld specify `load_path` to load a pretrained model")
         trainer.test()
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ net_arg.add_argument('--res_y', type=int, default=128)
 net_arg.add_argument('--res_z', type=int, default=128)
 net_arg.add_argument('--repeat', type=int, default=0)
 net_arg.add_argument('--filters', type=int, default=64)
-net_arg.add_argument('--num_conv', type=int, default=4)
+net_arg.add_argument('--num_conv', type=int, default=3)
 net_arg.add_argument('--use_curl', type=str2bool, default=True)
 net_arg.add_argument('--w1', type=float, default=1.0, help='weight for l1')
 net_arg.add_argument('--w2', type=float, default=1.0, help='weight for jacobian')
@@ -42,9 +42,9 @@ net_arg.add_argument('--w4', type=float, default=1.0, help='weight for physics l
 # Data
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, default='')
-data_arg.add_argument('--batch_size', type=int, default=8)
+data_arg.add_argument('--batch_size', type=int, default=4)
 data_arg.add_argument('--test_batch_size', type=int, default=100)
-data_arg.add_argument('--num_worker', type=int, default=2)
+data_arg.add_argument('--num_worker', type=int, default=1)
 data_arg.add_argument('--data_type', type=str, default='tumor_data')
 
 # Training / test parameters
@@ -72,7 +72,7 @@ misc_arg.add_argument('--log_step', type=int, default=500)
 misc_arg.add_argument('--test_step', type=int, default=1000)
 misc_arg.add_argument('--save_sec', type=int, default=3600)
 misc_arg.add_argument('--random_seed', type=int, default=123)
-misc_arg.add_argument('--gpu_id', type=str, default='0')
+misc_arg.add_argument('--gpu_id', type=str, default='')
 
 def get_config():
     config, unparsed = parser.parse_known_args()
