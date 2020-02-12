@@ -224,6 +224,7 @@ class Trainer_tumor(object):
             self.sess.run(self.optim)
 
             if step % self.log_step == 0 or step == self.max_step - 1:
+                #TODO:check. isnt this a memory leak? this possibily makes the graph increase
                 ep = step * self.batch_manager.epochs_per_step
                 loss, summary = self.sess.run([self.loss, self.summary_op],
                                               feed_dict={self.epoch: ep})

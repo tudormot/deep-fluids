@@ -51,8 +51,10 @@ class BatchManager(object):
         #     self.paths = sorted(glob("{}/{}/*".format(self.root, config.data_type[0])))
 
         if 'tumor' in config.arch:
-            self.paths = glob("{}/{}/*".format(self.root, config.data_type[0]))
-
+            #print(self.root)
+            #print(config.dataset)
+            #print('debug: ' + "{}/{}/*".format(self.root, config.dataset))
+            self.paths = glob("{}/*".format(self.root))
         else:
             raise Exception('only tumor architecture currently supported (1)')
 

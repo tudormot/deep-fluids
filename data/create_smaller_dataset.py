@@ -2,9 +2,9 @@ import shutil
 import os
 import numpy as np
 
-destination = "/home/tudorm/deep-fluids/data/t_reduced/"
+destination = "/home/tudorm/deep-fluids/data/t_reduced_further/"
 source="/home/tudorm/deep-fluids/data/t/"
-size_new_dataset = 100
+size_new_dataset = 10
 
 if not os.path.exists(destination):
     os.mkdir(destination)
@@ -12,7 +12,7 @@ if not os.path.exists(destination):
 
 file_list  = os.listdir(source)
 print('number of data points is original set: ' + str(len(file_list)))
-print('number of datapoint in reduced data set: ' + str(len(size_new_dataset)))
+print('number of datapoint in reduced data set: ' + str(size_new_dataset))
 
 choice = np.random.choice(len(file_list), size_new_dataset)
 

@@ -1,10 +1,11 @@
 import numpy as np
 import tensorflow as tf
 from ops import *
+import sys
 
 
 def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
-                num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=True, act=lrelu, reuse=False):
+                num_conv=4, conv_k=3, last_k=3, repeat=0, skip_concat=True, act=lrelu, reuse=False, include_encoder =False):
 
     # (self.x, self.y, self.filters, self.z_num, use_sparse=self.usesparse,
     # num_conv=self.num_conv, repeat=self.repeat)
@@ -14,39 +15,50 @@ def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
         #x contains not only brain anatomy, but also tumor concentration . Extract only brain anatomy:
         brain_anatomy = x[:,:,:,:,1:]
         tumor_ground_truth = x[:,:,:,:,0]
+        
+        if include_encoder:
+            anatomy_encoded, _ = EncoderAnatomy(brain_anatomy, filters, anatomy_latent_dim, 
+                             num_conv=num_conv - 1, conv_k=conv_k, repeat=repeat,
+                             act=act, reuse=reuse)
 
-        anatomy_encoded, _ = EncoderAnatomy(brain_anatomy, filters, anatomy_latent_dim, 
-                         num_conv=num_conv - 1, conv_k=conv_k, repeat=repeat,
-                         act=act, reuse=reuse)
+            # we need to concatenate the latent space data, with dimensions specified by 'anatomy latent dim'
+            # to the input parameters provided in dim. To do this we propagate the input parameters via a 
+            #fc layer to logits of shape anatomy_latent_dim[:-1] + [filter] . Thus we can concatenate
+
+            num_output = int(np.prod(np.array(anatomy_latent_dim[:-1] + [filters])))
+            layer_num = 0
+            x = linear(y, num_output, name=str(layer_num) + '_fc')
+            layer_num += 1
+            x = tf.reshape(x, [-1] + anatomy_latent_dim[:-1] + [filters])
+
+            print('generator first convolutional layer shape(excluding batch) :', get_conv_shape(x)[1:])
+            print('shape of encoded anatomy (excluding batch):', get_conv_shape(anatomy_encoded)[1:])
+
+            x = tf.concat([x,anatomy_encoded], axis=-1)
+
+            print('final generator input shape after concatenation is: ',get_conv_shape(x))
+
+            filter_num = filters + anatomy_latent_dim[-1]
+        else:
+  
+            num_output = int(np.prod(np.array(anatomy_latent_dim[:-1] + [filters])))
+            layer_num = 0
+            x = linear(y, num_output, name=str(layer_num) + '_fc')
+            layer_num += 1
+            x = tf.reshape(x, [-1] + anatomy_latent_dim[:-1] + [filters])
+            filter_num = filters
+
+        x0 = x
+
 
         #deduce output shape from input x shape:
         output_shape = get_conv_shape(tumor_ground_truth)
-        print (output_shape)
 
         if repeat == 0:
             repeat_num = int(np.log2(np.max(output_shape[1:]))) - 2
         else:
             repeat_num = repeat
         assert (repeat_num > 0 and np.sum([i % np.power(2, repeat_num - 1) for i in output_shape[1:]]) == 0)
-
-        # we need to concatenate the latent space data, with dimensions specified by 'anatomy latent dim'
-        # to the input parameters provided in dim. To do this we propagate the input parameters via a 
-        #fc layer to logits of shape anatomy_latent_dim[:-1] + [filter] . Thus we can concatenate
-
-        num_output = int(np.prod(np.array(anatomy_latent_dim[:-1] + [filters])))
-        layer_num = 0
-        x = linear(y, num_output, name=str(layer_num) + '_fc')
-        layer_num += 1
-        x = tf.reshape(x, [-1] + anatomy_latent_dim[:-1] + [filters])
-
-        print('generator first convolutional layer shape(excluding batch) :', get_conv_shape(x)[1:])
-        print('shape of encoded anatomy (excluding batch):', get_conv_shape(anatomy_encoded)[1:])
-
-        x = tf.concat([x,anatomy_encoded], axis=-1)
-
-        print('final generator input shape after concatenation is: ',get_conv_shape(x))
-
-        x0 = x
 
         #todo: shouldn't we decrease number of the channels as the generation progresses? Seemes a bit abbrupt to change from filter+latend_dim.shape[-1] to output.shape[-1] in the last layer
 
@@ -55,7 +67,7 @@ def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
 
         for idx in range(repeat_num):
             for _ in range(num_conv):
-                x = conv3d(x, filters + anatomy_latent_dim[-1], k=conv_k, s=1, act=act, name=str(layer_num) + '_conv')
+                x = conv3d(x, filter_num, k=conv_k, s=1, act=act, name=str(layer_num) + '_conv')
                 layer_num += 1
 
             if idx < repeat_num - 1:
@@ -75,10 +87,13 @@ def GeneratorTumor(x,y, anatomy_latent_dim, filters, name='G',
         # out = tf.clip_by_value(out, -1, 1)
         
         #for debugging:
-        tf.print('Managed to make it to the end of forward pass without OOM error.',out)
+        print_op = tf.print('Managed to make it to the end of forward pass without OOM error.',out,output_stream=sys.stdout)
+        with tf.control_dependencies([print_op]):
+            out_ = out
+
 
     variables = tf.contrib.framework.get_variables(vs)
-    return out, variables
+    return out_, variables
 
 
 def GeneratorBE(z, filters, output_shape, name='G',
